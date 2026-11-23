@@ -1,4 +1,4 @@
-From 81d6dc887e670483c87f60459be2579c870510e6 Mon Sep 17 00:00:00 2001
+From 7ab9b5939ec445449a9a84741c81624a40eb0e99 Mon Sep 17 00:00:00 2001
 From: local <local@local>
 Date: Sat, 14 Nov 2026 19:47:53 -0300
 Subject: [PATCH 1/8] =?UTF-8?q?TV=20antiga=20(webOS=203):=20polyfills,=20f?=
@@ -64,7 +64,7 @@ index 3f2be32feae9180eb90d295c9c62bfb0f2db8daf..f4b05f70041f9991c658b330040166bf
        "version": "0.21.5",
        "resolved": "https://registry.npmjs.org/esbuild/-/esbuild-0.21.5.tgz",
 diff --git a/tv-native/package.json b/tv-native/package.json
-index 4e7c76e1baf6bfb02169dc4ef117359ac7516a62..8656ac65ba6d2526140edb2a4b2e96cb60223830 100644
+index 2e6c3c283e9333f24f63b37edd5b5e0a7da8cc1f..0221ddef8631ceeaf67d0aa2d3b7566b74ec0986 100644
 --- a/tv-native/package.json
 +++ b/tv-native/package.json
 @@ -8,6 +8,7 @@
@@ -171,7 +171,7 @@ index 0000000000000000000000000000000000000000..2646d6207850f09992a0dc89254f13d5
 +  el.classList.add(classe);
 +}
 diff --git a/tv-native/src/core/Storage.ts b/tv-native/src/core/Storage.ts
-index 90c068b5d41ad4a1d749398f91a908b3d9a9b09c..3a6a6a31270ada928e4ed4c04c9bebe6cb7bd322 100644
+index 6525950d6af5bee45452ba891520f4bfcda21e34..acf973d48965b12325854c998cdc7d48cbd3715d 100644
 --- a/tv-native/src/core/Storage.ts
 +++ b/tv-native/src/core/Storage.ts
 @@ -31,6 +31,10 @@ export interface TVPreferences {
@@ -193,10 +193,10 @@ index 90c068b5d41ad4a1d749398f91a908b3d9a9b09c..3a6a6a31270ada928e4ed4c04c9bebe6
    private static PROGRESS_KEY = 'saimo_tv_vod_progress';
    private static FAV_CHANNELS_KEY = 'saimo_tv_fav_channels';
    private static FAV_VOD_KEY = 'saimo_tv_fav_vod';
-@@ -86,7 +91,18 @@ export class Storage {
-     try {
-       const data = localStorage.getItem(this.PREFS_KEY);
-       if (data) prefs = { ...DEFAULT_PREFS, ...JSON.parse(data) };
+@@ -94,7 +99,18 @@ export class Storage {
+           if (data) localStorage.setItem(this.PREFS_KEY, JSON.stringify({ ...JSON.parse(data), pularAutomatico: false }));
+         }
+       }
 -    } catch (e) {}
 +      // Listas padrão: aplicadas uma única vez em campo vazio. Se a pessoa apagar depois
 +      // em Ajustes > Listas, o vazio é respeitado.
@@ -479,7 +479,7 @@ index 4f0eb00d8857af4a1d780e8b960eadf9af677c3f..3a317e87d41365e25ab102df5768c0fc
      rollupOptions: {
        input: resolve(__dirname, 'index.html'),
 
-base-commit: 58dd340d196f7339e636b08e36953f32dff8a466
+base-commit: 86e0989d445dcf456c2dd9f41ef64e600a498dd1
 -- 
 2.54.0 (Apple Git-157)
 
