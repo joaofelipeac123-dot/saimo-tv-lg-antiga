@@ -1,0 +1,421 @@
+From ad750ce743ca55e931e1877e001b90b6add21042 Mon Sep 17 00:00:00 2001
+From: local <local@local>
+Date: Sat, 14 Nov 2026 20:04:30 -0300
+Subject: [PATCH 2/8] =?UTF-8?q?TV=20antiga=20(LG=20webOS=20com=20root):=20?=
+ =?UTF-8?q?aviso=20e=20instala=C3=A7=C3=A3o=20de=20atualiza=C3=A7=C3=A3o?=
+ =?UTF-8?q?=20pela=20TV?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ tv-native/src/core/Atualizador.ts       | 246 ++++++++++++++++++++++++
+ tv-native/src/core/Gap.ts               |  55 +++++-
+ tv-native/src/main.ts                   |   2 +
+ tv-native/src/screens/SettingsScreen.ts |   7 +-
+ tv-native/vite.config.ts                |   7 +-
+ 5 files changed, 311 insertions(+), 6 deletions(-)
+ create mode 100644 tv-native/src/core/Atualizador.ts
+
+diff --git a/tv-native/src/core/Atualizador.ts b/tv-native/src/core/Atualizador.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..32886932e9c50cdf355292346a3baa62cc75bc10
+--- /dev/null
++++ b/tv-native/src/core/Atualizador.ts
+@@ -0,0 +1,246 @@
++/**
++ * Atualização da versão "TV antiga" (LG webOS com root / Homebrew Channel).
++ *
++ * Ao abrir (e a cada 6 h) lê o versao.json publicado pela rotina do repositório privado.
++ * Se houver versão nova, oferece instalar: o pedido vai ao serviço do Homebrew Channel
++ * (`org.webosbrew.hbchannel.service/install`), que baixa o .ipk, confere o SHA-256 e instala.
++ *
++ * Endereço e versão vêm do build (variáveis SAIMO_LG_ATUALIZACAO e SAIMO_LG_VERSAO).
++ * Sem endereço, o módulo não faz nada (build oficial / outras TVs).
++ */
++
++import { Platform } from './Platform';
++import { SpatialNav } from './SpatialNav';
++
++declare const __SAIMO_LG_ATUALIZACAO__: string;
++declare const __SAIMO_LG_VERSAO__: string;
++
++const URL_VERSAO = typeof __SAIMO_LG_ATUALIZACAO__ === 'string' ? __SAIMO_LG_ATUALIZACAO__ : '';
++export const VERSAO_INSTALADA = typeof __SAIMO_LG_VERSAO__ === 'string' ? __SAIMO_LG_VERSAO__ : '';
++
++const SEIS_HORAS = 6 * 60 * 60 * 1000;
++const ADIADA_KEY = 'saimo_lg_atualizacao_adiada';
++
++export interface InfoVersao {
++  versao: string;        // "3.0.601" (formato do webOS, comparável)
++  exibir: string;        // "3.0.6" ou "3.0.6 (revisão 1)"
++  ipkUrl: string;
++  sha256: string;
++  notas?: string;
++}
++
++/** "3.0.5" → "3.0.5"; "3.0.601" → "3.0.6 (revisão 1)". */
++export function versaoLegivel(v: string): string {
++  const p = (v || '').split('.');
++  if (p.length !== 3) return v;
++  const z = parseInt(p[2], 10);
++  if (z < 100) return v;
++  const rev = z % 100;
++  return p[0] + '.' + p[1] + '.' + Math.floor(z / 100) + (rev ? ' (revisão ' + rev + ')' : '');
++}
++
++function comparar(a: string, b: string): number {
++  const pa = a.split('.'), pb = b.split('.');
++  for (let i = 0; i < 3; i++) {
++    const d = (parseInt(pa[i], 10) || 0) - (parseInt(pb[i], 10) || 0);
++    if (d) return d;
++  }
++  return 0;
++}
++
++/** Chamada a um serviço do sistema (webOS) com respostas sucessivas (subscribe). */
++function chamarLuna(uri: string, params: any, aoResponder: (r: any) => void): any {
++  const Bridge = (window as any).PalmServiceBridge;
++  if (!Bridge) throw new Error('Esta TV não permite instalar pelo app');
++  const bridge = new Bridge();
++  bridge.onservicecallback = (msg: string) => {
++    let r: any;
++    try { r = JSON.parse(msg); } catch (e) { r = { returnValue: false, errorText: String(msg) }; }
++    aoResponder(r);
++  };
++  bridge.call(uri, JSON.stringify(params));
++  return bridge;
++}
++
++/**
++ * O instalador do sistema fecha o app no fim. Antes de instalar, deixamos (via `exec` do
++ * Homebrew Channel, que roda como root) um vigia: quando o app fechar, ele o abre de novo,
++ * tentando a cada 2 s porque logo após fechar o webOS ainda recusa abrir. Desiste em 3 min.
++ * O script vai em base64 para não depender de aspas escapadas em várias camadas.
++ */
++const ID_APP = 'br.com.saimo.tv';
++const VIGIA = [
++  'i=0',
++  'while [ $i -lt 180 ]; do',
++  '  sleep 1; i=$((i+1))',
++  "  if ! luna-send -n 1 luna://com.webos.applicationManager/running '{}' | grep -q " + ID_APP + '; then',
++  '    n=0',
++  '    while [ $n -lt 15 ]; do',
++  '      sleep 2; n=$((n+1))',
++  "      r=$(luna-send -n 1 luna://com.webos.applicationManager/launch '{\"id\":\"" + ID_APP + "\"}')",
++  "      case \"$r\" in *'\"returnValue\":true'*) exit 0;; esac",
++  '    done',
++  '    exit 1',
++  '  fi',
++  'done',
++].join('\n') + '\n';
++
++function exec(comando: string) {
++  try {
++    chamarLuna('luna://org.webosbrew.hbchannel.service/exec', { command: comando }, () => {});
++  } catch (e) {}
++}
++
++function armarReabertura() {
++  exec('echo ' + btoa(VIGIA) + ' | base64 -d > /tmp/saimo-reabrir.sh && (nohup sh /tmp/saimo-reabrir.sh >/dev/null 2>&1 &)');
++}
++
++function desarmarReabertura() {
++  exec('pkill -f saimo-reabrir.sh; rm -f /tmp/saimo-reabrir.sh');
++}
++
++export class Atualizador {
++  private static el: HTMLElement | null = null;
++  private static ponteAtiva: any = null; // mantém a chamada viva (o GC cancelaria a assinatura)
++  private static instalando = false;
++
++  static ativo(): boolean {
++    return !!URL_VERSAO && Platform.isWebOS;
++  }
++
++  static iniciar() {
++    if (!this.ativo()) return;
++    window.setTimeout(() => this.verificar(false), 8000);
++    window.setInterval(() => this.verificar(false), SEIS_HORAS);
++  }
++
++  /** manual = pedido em Ajustes: sempre responde (inclusive "já está atualizado"). */
++  static async verificar(manual: boolean): Promise<void> {
++    if (!this.ativo()) {
++      if (manual) this.mostrar('Atualizações', 'A atualização automática não está disponível nesta versão.', [{ rotulo: 'OK' }]);
++      return;
++    }
++    if (this.instalando) return;
++    let info: InfoVersao;
++    try {
++      const res = await fetch(URL_VERSAO + (URL_VERSAO.indexOf('?') >= 0 ? '&' : '?') + 't=' + Date.now());
++      if (!res.ok) throw new Error('HTTP ' + res.status);
++      info = await res.json();
++    } catch (e: any) {
++      console.warn('[Atualizador] Falha ao verificar:', e);
++      if (manual) this.mostrar('Atualizações', 'Não consegui verificar agora. Confira a internet da TV.', [{ rotulo: 'OK' }]);
++      return;
++    }
++    if (!info || !info.versao || comparar(info.versao, VERSAO_INSTALADA) <= 0) {
++      if (manual) this.mostrar('Atualizações', 'Você já está na versão mais recente (' + versaoLegivel(VERSAO_INSTALADA) + ').', [{ rotulo: 'OK' }]);
++      return;
++    }
++    if (!manual) {
++      try { if (localStorage.getItem(ADIADA_KEY) === info.versao) return; } catch (e) {}
++    }
++    const exibir = info.exibir || versaoLegivel(info.versao);
++    this.mostrar(
++      'Atualização disponível',
++      'A versão ' + exibir + ' do Saimo TV está pronta (você está na ' + versaoLegivel(VERSAO_INSTALADA) + ').' +
++        (info.notas ? '\n\nNovidades: ' + info.notas : ''),
++      [
++        { rotulo: 'Instalar agora', primario: true, acao: () => this.instalar(info) },
++        { rotulo: 'Depois', acao: () => { try { localStorage.setItem(ADIADA_KEY, info.versao); } catch (e) {} } },
++      ],
++    );
++  }
++
++  private static instalar(info: InfoVersao) {
++    this.instalando = true;
++    this.mostrar('Instalando atualização', 'Baixando…', []);
++    const texto = (t: string) => {
++      const p = this.el && this.el.querySelector('.saimo-atu-texto');
++      if (p) p.textContent = t;
++    };
++    try {
++      armarReabertura();
++      this.ponteAtiva = chamarLuna(
++        'luna://org.webosbrew.hbchannel.service/install',
++        { id: 'br.com.saimo.tv', ipkUrl: info.ipkUrl, ipkHash: info.sha256, subscribe: true },
++        (r) => {
++          if (r.returnValue === false || r.errorText) {
++            desarmarReabertura();
++            this.instalando = false;
++            this.ponteAtiva = null;
++            this.mostrar('Não deu para instalar', String(r.errorText || 'Erro desconhecido') +
++              '\n\nConfira se o Homebrew Channel está instalado e com root.', [{ rotulo: 'OK' }]);
++            return;
++          }
++          if (r.finished) {
++            texto('Instalado! O Saimo TV vai fechar e abrir de novo sozinho em alguns segundos.');
++            return;
++          }
++          if (r.statusText) {
++            const pct = typeof r.progress === 'number' ? ' ' + Math.round(r.progress) + '%' : '';
++            const traducao: { [k: string]: string } = {
++              'Downloading…': 'Baixando…', 'Verifying…': 'Conferindo o arquivo…', 'Installing…': 'Instalando…',
++            };
++            texto((traducao[r.statusText] || r.statusText) + pct);
++          }
++        },
++      );
++    } catch (e: any) {
++      desarmarReabertura();
++      this.instalando = false;
++      this.mostrar('Não deu para instalar', String(e && e.message || e), [{ rotulo: 'OK' }]);
++    }
++  }
++
++  private static mostrar(
++    titulo: string,
++    mensagem: string,
++    botoes: { rotulo: string; primario?: boolean; acao?: () => void }[],
++  ) {
++    if (!this.el) {
++      this.el = document.createElement('div');
++      this.el.className = 'tv-modal-overlay';
++      this.el.style.zIndex = '9000';
++      (document.getElementById('app') || document.body).appendChild(this.el);
++      window.addEventListener('keydown', (e) => {
++        if (!this.el || this.el.style.display === 'none' || !Platform.isBackKey(e.keyCode)) return;
++        e.preventDefault();
++        e.stopImmediatePropagation();
++        if (!this.instalando) this.fechar();
++      }, true);
++    }
++    const devolver = SpatialNav.getCurrent();
++    this.el.innerHTML =
++      '<div class="tv-modal-content">' +
++      '<div class="tv-modal-title"></div>' +
++      '<p class="saimo-atu-texto" style="font-size:24px;line-height:1.45;white-space:pre-line;margin:0 0 28px;"></p>' +
++      '<div class="saimo-atu-botoes" style="display:flex;"></div>' +
++      '</div>';
++    this.el.querySelector('.tv-modal-title')!.textContent = titulo;
++    this.el.querySelector('.saimo-atu-texto')!.textContent = mensagem;
++    const area = this.el.querySelector('.saimo-atu-botoes') as HTMLElement;
++    let primeiro: HTMLElement | null = null;
++    botoes.forEach((b, i) => {
++      const btn = document.createElement('div');
++      btn.className = 'tv-btn nav-focusable' + (b.primario ? ' primary' : '');
++      btn.setAttribute('data-nav', 'true');
++      if (i > 0) btn.style.marginLeft = '16px';
++      btn.textContent = b.rotulo;
++      btn.addEventListener('click', () => {
++        if (!b.acao || b.rotulo !== 'Instalar agora') this.fechar(devolver);
++        if (b.acao) b.acao();
++      });
++      area.appendChild(btn);
++      if (!primeiro) primeiro = btn;
++    });
++    this.el.style.display = 'flex';
++    SpatialNav.setTrap(this.el);
++    if (primeiro) SpatialNav.focus(primeiro);
++  }
++
++  private static fechar(devolver?: HTMLElement | null) {
++    if (!this.el) return;
++    this.el.style.display = 'none';
++    SpatialNav.setTrap(null);
++    if (devolver && document.body.contains(devolver)) SpatialNav.focus(devolver);
++  }
++}
+diff --git a/tv-native/src/core/Gap.ts b/tv-native/src/core/Gap.ts
+index 2646d6207850f09992a0dc89254f13d5b763afa3..bd5ae026236a3b79f254ade622bb05237736697d 100644
+--- a/tv-native/src/core/Gap.ts
++++ b/tv-native/src/core/Gap.ts
+@@ -28,15 +28,60 @@ export function detectarGap(): boolean {
+   } catch (e) {
+     semGap = true;
+   }
+-  if (semGap) raiz.className += (raiz.className ? ' ' : '') + 'sem-gap';
++  if (semGap) {
++    raiz.className += (raiz.className ? ' ' : '') + 'sem-gap';
++    vigiarGapInline();
++  }
+   return !semGap;
+ }
+ 
++/**
++ * HTML montado pelo código com `style="display:flex; gap:12px"`: o atributo guarda o texto
++ * mesmo quando a TV não entende `gap`, então dá para ler e aplicar o fallback.
++ */
++function vigiarGapInline() {
++  const tratar = (raizBusca: Element | Document) => {
++    const lista = raizBusca.querySelectorAll('[style*="gap"]');
++    const todos: Element[] = [];
++    if ((raizBusca as Element).getAttribute && ((raizBusca as Element).getAttribute('style') || '').indexOf('gap') >= 0) {
++      todos.push(raizBusca as Element);
++    }
++    for (let i = 0; i < lista.length; i++) todos.push(lista[i]);
++    for (let i = 0; i < todos.length; i++) {
++      const el = todos[i] as HTMLElement;
++      if ((el as any).__gapFb) continue;
++      const estilo = el.getAttribute('style') || '';
++      const m = /(?:^|;)\s*gap\s*:\s*([^;]+)/i.exec(estilo);
++      if (!m) continue;
++      (el as any).__gapFb = true;
++      const valor = m[1].trim().split(/\s+/)[0];
++      const direcao = /flex-wrap\s*:\s*wrap/i.test(estilo)
++        ? 'wrap'
++        : /flex-direction\s*:\s*column/i.test(estilo) ? 'column' : 'row';
++      aplicarGap(el, valor, direcao);
++    }
++  };
++  const iniciar = () => {
++    tratar(document);
++    if (typeof MutationObserver === 'undefined') return;
++    new MutationObserver((mudancas) => {
++      for (let i = 0; i < mudancas.length; i++) {
++        const nos = mudancas[i].addedNodes;
++        for (let j = 0; j < nos.length; j++) {
++          if (nos[j].nodeType === 1) tratar(nos[j] as Element);
++        }
++      }
++    }).observe(document.documentElement, { childList: true, subtree: true });
++  };
++  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar);
++  else iniciar();
++}
++
+ const regrasCriadas: { [classe: string]: boolean } = {};
+ let folha: HTMLStyleElement | null = null;
+ 
+ /** Define o gap de um contêiner flex criado pelo código, com fallback para TV antiga. */
+-export function aplicarGap(el: HTMLElement, valor: string, direcao: 'row' | 'column' = 'row') {
++export function aplicarGap(el: HTMLElement, valor: string, direcao: 'row' | 'column' | 'wrap' = 'row') {
+   (el.style as any).gap = valor;
+   if (detectarGap()) return;
+   const classe = 'gapfb-' + direcao + '-' + valor.replace(/[^a-z0-9]/gi, '_');
+@@ -46,8 +91,10 @@ export function aplicarGap(el: HTMLElement, valor: string, direcao: 'row' | 'col
+       folha = document.createElement('style');
+       document.head.appendChild(folha);
+     }
+-    const lado = direcao === 'column' ? 'margin-top' : 'margin-left';
+-    folha.appendChild(document.createTextNode('.' + classe + '>*+*{' + lado + ':' + valor + '}'));
++    const regra = direcao === 'wrap'
++      ? '.' + classe + '>*{margin-right:' + valor + ';margin-bottom:' + valor + '}'
++      : '.' + classe + '>*+*{' + (direcao === 'column' ? 'margin-top' : 'margin-left') + ':' + valor + '}';
++    folha.appendChild(document.createTextNode(regra));
+   }
+   el.classList.add(classe);
+ }
+diff --git a/tv-native/src/main.ts b/tv-native/src/main.ts
+index a288ba8d21e20588fd3597a1ef15dadb56c6dd6b..9a6ca403c71cdf29028f2f9644f17e091c660520 100644
+--- a/tv-native/src/main.ts
++++ b/tv-native/src/main.ts
+@@ -25,6 +25,7 @@ import { Api } from './core/Api';
+ import { Addons } from './core/Addons';
+ import { PlayerFactory } from './player/PlayerFactory';
+ import { MenuGlobal } from './components/MenuGlobal';
++import { Atualizador } from './core/Atualizador';
+ 
+ import { LiveScreen } from './screens/LiveScreen';
+ import { HomeScreen } from './screens/HomeScreen';
+@@ -128,6 +129,7 @@ class SaimoTVApp {
+ 
+     iniciarTema();
+     this.boot();
++    Atualizador.iniciar();
+   }
+ 
+   private async boot() {
+diff --git a/tv-native/src/screens/SettingsScreen.ts b/tv-native/src/screens/SettingsScreen.ts
+index 9eb87bbde3cc8f08528003b08e8075090be4d487..06e36581cdd8447928fa1fa4eec806e7a25ef2fe 100644
+--- a/tv-native/src/screens/SettingsScreen.ts
++++ b/tv-native/src/screens/SettingsScreen.ts
+@@ -34,6 +34,8 @@ function rotuloDe<T extends string>(lista: readonly (readonly [T, string])[], va
+   return x ? x[1] : String(valor);
+ }
+ 
++import { Atualizador, VERSAO_INSTALADA, versaoLegivel } from '../core/Atualizador';
++
+ export class SettingsScreen {
+   private element: HTMLElement;
+   private listContainer: HTMLElement;
+@@ -298,7 +300,10 @@ export class SettingsScreen {
+     });
+ 
+     addOption('sobre-plataforma', 'Sistema Operacional', platformLabel, () => {});
+-    addOption('sobre-versao', 'Versão', __VERSAO_APP__, () => {});
++    addOption('sobre-versao', 'Versão', versaoLegivel(VERSAO_INSTALADA) || __VERSAO_APP__, () => {});
++    if (Atualizador.ativo()) {
++      addOption('sobre-atualizar', 'Procurar atualização', 'Verificar se há versão nova', () => { Atualizador.verificar(true); });
++    }
+ 
+     // CONTROLE PARENTAL: no fim, separado e discreto. No Kids não aparece.
+     if (!ehKids()) {
+diff --git a/tv-native/vite.config.ts b/tv-native/vite.config.ts
+index 3a317e87d41365e25ab102df5768c0fc612215b2..f4c78887222a07ffa40ce4c2ff8108b189386e8a 100644
+--- a/tv-native/vite.config.ts
++++ b/tv-native/vite.config.ts
+@@ -147,11 +147,16 @@ function varReserva() {
+   };
+ }
+ 
++// Atualização pela TV (src/core/Atualizador.ts): definidos pela rotina do repositório privado.
++const versaoPacote = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf8')).version;
++
+ export default defineConfig({
+   root: '.',
+   base: './',
+   define: {
+-    __VERSAO_APP__: JSON.stringify(versao)
++    __VERSAO_APP__: JSON.stringify(versao),
++    __SAIMO_LG_ATUALIZACAO__: JSON.stringify(process.env.SAIMO_LG_ATUALIZACAO || ''),
++    __SAIMO_LG_VERSAO__: JSON.stringify(process.env.SAIMO_LG_VERSAO || versaoPacote),
+   },
+   css: {
+     // varReserva() por último: o Chromium 38 (LG webOS 3) não conhece variáveis de CSS e
+-- 
+2.54.0 (Apple Git-157)
+

@@ -1,0 +1,36 @@
+name: Testar com a versão oficial
+
+# Todo dia (e a cada mudança) aplica os patches na versão oficial mais recente do Saimo TV,
+# compila e roda o teste num Chromium sem as APIs que faltam no Chromium 38 da TV.
+# Só testa: não publica nada.
+on:
+  schedule:
+    - cron: '41 9 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  testar:
+    runs-on: ubuntu-24.04  # Playwright 1.56 não roda no Ubuntu 26.04
+    timeout-minutes: 30
+    env:
+      URL_PUBLICA: https://example.invalid
+      FORCAR: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - run: mkdir -p publico && bash scripts/montar.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ipk
+          path: publico/*.ipk
+          retention-days: 7

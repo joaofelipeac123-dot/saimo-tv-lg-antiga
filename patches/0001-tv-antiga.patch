@@ -1,0 +1,485 @@
+From 81d6dc887e670483c87f60459be2579c870510e6 Mon Sep 17 00:00:00 2001
+From: local <local@local>
+Date: Sat, 14 Nov 2026 19:47:53 -0300
+Subject: [PATCH 1/8] =?UTF-8?q?TV=20antiga=20(webOS=203):=20polyfills,=20f?=
+ =?UTF-8?q?allback=20de=20gap,=20listas=20padr=C3=A3o?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ tv-native/package-lock.json                 |  19 +++-
+ tv-native/package.json                      |   1 +
+ tv-native/src/components/VirtualKeyboard.ts |   7 +-
+ tv-native/src/core/Gap.ts                   |  53 ++++++++++
+ tv-native/src/core/Storage.ts               |  18 +++-
+ tv-native/src/core/polyfills.ts             |  51 +++++++++
+ tv-native/src/main.ts                       |   6 +-
+ tv-native/src/screens/FichaScreen.ts        |   3 +-
+ tv-native/src/screens/OnDemandScreen.ts     |   3 +-
+ tv-native/vite.config.ts                    | 108 +++++++++++++++++++-
+ 10 files changed, 258 insertions(+), 11 deletions(-)
+ create mode 100644 tv-native/src/core/Gap.ts
+
+diff --git a/tv-native/package-lock.json b/tv-native/package-lock.json
+index 3f2be32feae9180eb90d295c9c62bfb0f2db8daf..f4b05f70041f9991c658b330040166bf4f7a1a91 100644
+--- a/tv-native/package-lock.json
++++ b/tv-native/package-lock.json
+@@ -1,13 +1,14 @@
+ {
+   "name": "saimo-tv-native",
+-  "version": "2.6.0",
++  "version": "3.0.4",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "saimo-tv-native",
+-      "version": "2.6.0",
++      "version": "3.0.4",
+       "dependencies": {
++        "core-js": "^3.51.0",
+         "hls.js": "^1.5.17"
+       },
+       "devDependencies": {
+@@ -822,6 +823,20 @@
+       "dev": true,
+       "license": "MIT"
+     },
++    "node_modules/core-js": {
++      "version": "3.51.0",
++      "resolved": "https://registry.npmjs.org/core-js/-/core-js-3.51.0.tgz",
++      "integrity": "sha512-7bDKx/5jm5MxzsXxc93g6Z2+4ZsuT/MddrfRmTDJNAkWsYWHU8EVNEsBiIEWnMAMCHMmRfUEjkuo3jeNBOIHRw==",
++      "hasInstallScript": true,
++      "license": "MIT",
++      "engines": {
++        "node": "*"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/core-js"
++      }
++    },
+     "node_modules/esbuild": {
+       "version": "0.21.5",
+       "resolved": "https://registry.npmjs.org/esbuild/-/esbuild-0.21.5.tgz",
+diff --git a/tv-native/package.json b/tv-native/package.json
+index 4e7c76e1baf6bfb02169dc4ef117359ac7516a62..8656ac65ba6d2526140edb2a4b2e96cb60223830 100644
+--- a/tv-native/package.json
++++ b/tv-native/package.json
+@@ -8,6 +8,7 @@
+     "dev": "vite"
+   },
+   "dependencies": {
++    "core-js": "^3.51.0",
+     "hls.js": "^1.5.17"
+   },
+   "devDependencies": {
+diff --git a/tv-native/src/components/VirtualKeyboard.ts b/tv-native/src/components/VirtualKeyboard.ts
+index 1878b090031825c427c5a3c52ebf197070e9ae25..95e3bed249d114604c197b438bd8d69cce5d1fbf 100644
+--- a/tv-native/src/components/VirtualKeyboard.ts
++++ b/tv-native/src/components/VirtualKeyboard.ts
+@@ -4,6 +4,7 @@
+  */
+ 
+ import { SpatialNav } from '../core/SpatialNav';
++import { aplicarGap } from '../core/Gap';
+ 
+ export class VirtualKeyboard {
+   private element: HTMLElement;
+@@ -45,12 +46,12 @@ export class VirtualKeyboard {
+     this.element.innerHTML = '';
+     this.element.style.display = 'flex';
+     this.element.style.flexDirection = 'column';
+-    this.element.style.gap = '8px';
++    aplicarGap(this.element, '8px', 'column');
+ 
+     VirtualKeyboard.KEY_ROWS.forEach((row, rowIdx) => {
+       const rowEl = document.createElement('div');
+       rowEl.style.display = 'flex';
+-      rowEl.style.gap = '8px';
++      aplicarGap(rowEl, '8px');
+ 
+       row.forEach((key, colIdx) => {
+         const btn = document.createElement('div');
+@@ -80,7 +81,7 @@ export class VirtualKeyboard {
+     // Linha inferior de Ações (Espaço, Apagar, Limpar, Buscar)
+     const actionRow = document.createElement('div');
+     actionRow.style.display = 'flex';
+-    actionRow.style.gap = '8px';
++    aplicarGap(actionRow, '8px');
+ 
+     const spaceBtn = document.createElement('div');
+     spaceBtn.className = 'tv-btn nav-focusable tv-key-btn';
+diff --git a/tv-native/src/core/Gap.ts b/tv-native/src/core/Gap.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..2646d6207850f09992a0dc89254f13d5b763afa3
+--- /dev/null
++++ b/tv-native/src/core/Gap.ts
+@@ -0,0 +1,53 @@
++/**
++ * `gap` em flexbox só existe a partir do Chromium 84 (TVs LG/Samsung de 2021+).
++ * Em TV antiga (webOS 3/4/5, Tizen até 5.5) a propriedade é ignorada e os itens ficam colados.
++ *
++ * - CSS das folhas de estilo: o plugin PostCSS em vite.config.ts gera regras de margem sob
++ *   `html.sem-gap`, que só valem quando este arquivo detecta a falta de suporte.
++ * - Gap definido pelo código (`el.style.gap`): use `aplicarGap()` em vez de `style.gap`.
++ */
++
++let semGap: boolean | null = null;
++
++export function detectarGap(): boolean {
++  if (semGap !== null) return !semGap;
++  const raiz = document.documentElement;
++  try {
++    const teste = document.createElement('div');
++    teste.style.display = 'flex';
++    teste.style.flexDirection = 'column';
++    (teste.style as any).rowGap = '1px';
++    (teste.style as any).gap = '1px';
++    teste.style.position = 'absolute';
++    teste.style.visibility = 'hidden';
++    teste.appendChild(document.createElement('div'));
++    teste.appendChild(document.createElement('div'));
++    raiz.appendChild(teste);
++    semGap = teste.scrollHeight !== 1;
++    raiz.removeChild(teste);
++  } catch (e) {
++    semGap = true;
++  }
++  if (semGap) raiz.className += (raiz.className ? ' ' : '') + 'sem-gap';
++  return !semGap;
++}
++
++const regrasCriadas: { [classe: string]: boolean } = {};
++let folha: HTMLStyleElement | null = null;
++
++/** Define o gap de um contêiner flex criado pelo código, com fallback para TV antiga. */
++export function aplicarGap(el: HTMLElement, valor: string, direcao: 'row' | 'column' = 'row') {
++  (el.style as any).gap = valor;
++  if (detectarGap()) return;
++  const classe = 'gapfb-' + direcao + '-' + valor.replace(/[^a-z0-9]/gi, '_');
++  if (!regrasCriadas[classe]) {
++    regrasCriadas[classe] = true;
++    if (!folha) {
++      folha = document.createElement('style');
++      document.head.appendChild(folha);
++    }
++    const lado = direcao === 'column' ? 'margin-top' : 'margin-left';
++    folha.appendChild(document.createTextNode('.' + classe + '>*+*{' + lado + ':' + valor + '}'));
++  }
++  el.classList.add(classe);
++}
+diff --git a/tv-native/src/core/Storage.ts b/tv-native/src/core/Storage.ts
+index 90c068b5d41ad4a1d749398f91a908b3d9a9b09c..3a6a6a31270ada928e4ed4c04c9bebe6cb7bd322 100644
+--- a/tv-native/src/core/Storage.ts
++++ b/tv-native/src/core/Storage.ts
+@@ -31,6 +31,10 @@ export interface TVPreferences {
+   urlFilmes: string;
+ }
+ 
++/** Listas que já vêm configuradas (Ajustes > Listas). */
++export const LISTA_CANAIS_PADRAO = 'https://canais-saimo.pages.dev/';
++export const LISTA_FILMES_PADRAO = 'https://filmes-saimo.pages.dev/';
++
+ const DEFAULT_PREFS: TVPreferences = {
+   abrirEm: 'inicio',
+   zeroDelay: 'equilibrado',
+@@ -48,6 +52,7 @@ const DEFAULT_PREFS: TVPreferences = {
+ 
+ export class Storage {
+   private static PREFS_KEY = 'saimo_tv_prefs';
++  private static LISTAS_PADRAO_KEY = 'saimo_tv_listas_padrao_v1';
+   private static PROGRESS_KEY = 'saimo_tv_vod_progress';
+   private static FAV_CHANNELS_KEY = 'saimo_tv_fav_channels';
+   private static FAV_VOD_KEY = 'saimo_tv_fav_vod';
+@@ -86,7 +91,18 @@ export class Storage {
+     try {
+       const data = localStorage.getItem(this.PREFS_KEY);
+       if (data) prefs = { ...DEFAULT_PREFS, ...JSON.parse(data) };
+-    } catch (e) {}
++      // Listas padrão: aplicadas uma única vez em campo vazio. Se a pessoa apagar depois
++      // em Ajustes > Listas, o vazio é respeitado.
++      if (!localStorage.getItem(this.LISTAS_PADRAO_KEY)) {
++        if (!(prefs.urlCanais || '').trim()) prefs.urlCanais = LISTA_CANAIS_PADRAO;
++        if (!(prefs.urlFilmes || '').trim()) prefs.urlFilmes = LISTA_FILMES_PADRAO;
++        localStorage.setItem(this.PREFS_KEY, JSON.stringify(prefs));
++        localStorage.setItem(this.LISTAS_PADRAO_KEY, '1');
++      }
++    } catch (e) {
++      if (!(prefs.urlCanais || '').trim()) prefs.urlCanais = LISTA_CANAIS_PADRAO;
++      if (!(prefs.urlFilmes || '').trim()) prefs.urlFilmes = LISTA_FILMES_PADRAO;
++    }
+     try {
+       const ultimo = localStorage.getItem(this.ULTIMO_CANAL_KEY);
+       if (ultimo !== null) prefs.ultimoCanal = ultimo;
+diff --git a/tv-native/src/core/polyfills.ts b/tv-native/src/core/polyfills.ts
+index 7ac7452a7fce46833c424c169eaa5dbfe2650b64..b49b638c01b74d30b946d1f13272db5f5d41076f 100644
+--- a/tv-native/src/core/polyfills.ts
++++ b/tv-native/src/core/polyfills.ts
+@@ -1,7 +1,16 @@
+ /**
+  * Polyfills para navegadores antigos de Smart TVs (webOS 3.x Chrome 38, webOS 4.x Chrome 53, Tizen 3/4).
+  * Carregado antes de qualquer módulo da aplicação.
++ *
++ * O Babel (scripts/tv_es5.mjs) só converte a SINTAXE para ES5. As funções que faltam no
++ * Chromium 38 (webOS 3.x, TVs LG 2016-2017: Object.assign, Array.from, Array#find,
++ * String#padStart, Promise#finally, NodeList#forEach, URLSearchParams, Reflect…) vêm do core-js.
++ * Sem isso o app quebra logo ao abrir nessas TVs.
+  */
++import 'core-js/stable';
++import { detectarGap } from './Gap';
++
++detectarGap();
+ 
+ (function () {
+   var g: any = typeof globalThis !== 'undefined' ? globalThis : window;
+@@ -146,6 +155,48 @@
+       return o;
+     };
+   }
++  // append/prepend/before/after/replaceWith (Chromium 54) e remove (Chromium 23): o core-js
++  // não cobre DOM. Sem isso, qualquer tela que use `el.append(a, b)` quebra o app inteiro na
++  // TV antiga, porque todas as telas são criadas ao abrir.
++  (function () {
++    var paraNo = function (n: any): Node {
++      return n instanceof Node ? n : document.createTextNode(String(n));
++    };
++    var fragmento = function (itens: any[]): Node {
++      if (itens.length === 1) return paraNo(itens[0]);
++      var f = document.createDocumentFragment();
++      for (var i = 0; i < itens.length; i++) f.appendChild(paraNo(itens[i]));
++      return f;
++    };
++    var definir = function (proto: any, nome: string, fn: Function) {
++      if (!proto || proto[nome]) return;
++      Object.defineProperty(proto, nome, { configurable: true, enumerable: false, writable: true, value: fn });
++    };
++    var pais = [typeof Element !== 'undefined' && Element.prototype, typeof Document !== 'undefined' && Document.prototype, typeof DocumentFragment !== 'undefined' && DocumentFragment.prototype];
++    var filhos = [typeof Element !== 'undefined' && Element.prototype, typeof CharacterData !== 'undefined' && CharacterData.prototype, typeof DocumentType !== 'undefined' && DocumentType.prototype];
++    for (var i = 0; i < pais.length; i++) {
++      definir(pais[i], 'append', function (this: any) {
++        this.appendChild(fragmento(Array.prototype.slice.call(arguments)));
++      });
++      definir(pais[i], 'prepend', function (this: any) {
++        this.insertBefore(fragmento(Array.prototype.slice.call(arguments)), this.firstChild);
++      });
++    }
++    for (var j = 0; j < filhos.length; j++) {
++      definir(filhos[j], 'remove', function (this: any) {
++        if (this.parentNode) this.parentNode.removeChild(this);
++      });
++      definir(filhos[j], 'before', function (this: any) {
++        if (this.parentNode) this.parentNode.insertBefore(fragmento(Array.prototype.slice.call(arguments)), this);
++      });
++      definir(filhos[j], 'after', function (this: any) {
++        if (this.parentNode) this.parentNode.insertBefore(fragmento(Array.prototype.slice.call(arguments)), this.nextSibling);
++      });
++      definir(filhos[j], 'replaceWith', function (this: any) {
++        if (this.parentNode) this.parentNode.replaceChild(fragmento(Array.prototype.slice.call(arguments)), this);
++      });
++    }
++  })();
+ 
+   if (typeof g.CustomEvent !== 'function') {
+     var CustomEventPoly = function (event: string, params?: CustomEventInit) {
+diff --git a/tv-native/src/main.ts b/tv-native/src/main.ts
+index c0f9533618df9e6fdf25b209d9b4f5e2334d513f..a288ba8d21e20588fd3597a1ef15dadb56c6dd6b 100644
+--- a/tv-native/src/main.ts
++++ b/tv-native/src/main.ts
+@@ -14,7 +14,9 @@ import { definirCaminhoAvatar, deveEscolherAoAbrir } from '../../src/perfis/perf
+ import './styles/tv.css';
+ import './styles/tv-box.css';
+ // TVs que não entendem `gap` nos flex (LG webOS 4.x): margens no lugar (só com .sem-gap no <html>).
+-import './styles/sem-gap.css';
++// sem-gap.css (lista feita à mão) não entra: o gapFallback() do vite.config.ts já gera as margens
++// de todas as regras com gap; com os dois, o espaçamento dobrava.
++// import './styles/sem-gap.css';
+ import { Platform } from './core/Platform';
+ import { SpatialNav } from './core/SpatialNav';
+ import { State, ScreenType } from './core/State';
+@@ -227,7 +229,7 @@ function iniciarApp() {
+     const root = document.getElementById('app') || document.body;
+     const aviso = document.createElement('div');
+     aviso.style.cssText =
+-      'position:fixed;inset:0;background:#0d0e12;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:sans-serif;padding:48px;z-index:99999;text-align:center;';
++      'position:fixed;top:0;left:0;right:0;bottom:0;background:#0d0e12;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:sans-serif;padding:48px;z-index:99999;text-align:center;';
+     aviso.innerHTML =
+       '<h1 style="font-size:40px;margin-bottom:16px;color:#e50914;">Saimo TV</h1>' +
+       '<p style="font-size:26px;opacity:0.85;">Erro ao inicializar aplicativo na TV.</p>' +
+diff --git a/tv-native/src/screens/FichaScreen.ts b/tv-native/src/screens/FichaScreen.ts
+index 74495fbdbc88dd0cbb22b0154d27d033ada80b67..7123aeed34828b5a039fc5e72cae6a2154d184ae 100644
+--- a/tv-native/src/screens/FichaScreen.ts
++++ b/tv-native/src/screens/FichaScreen.ts
+@@ -15,6 +15,7 @@ import { Storage } from '../core/Storage';
+ import { SourceModal, SourceModalOption } from '../components/SourceModal';
+ import { Rail, CardModel } from '../components/Rail';
+ import { SpatialNav } from '../core/SpatialNav';
++import { aplicarGap } from '../core/Gap';
+ 
+ export class FichaScreen {
+   private element: HTMLElement;
+@@ -80,7 +81,7 @@ export class FichaScreen {
+     this.seasonsContainer = document.createElement('div');
+     this.seasonsContainer.className = 'tv-category-chips';
+     this.seasonsContainer.style.display = 'none';
+-    this.seasonsContainer.style.gap = '12px';
++    aplicarGap(this.seasonsContainer, '12px');
+     this.seasonsContainer.style.margin = '20px 0 10px';
+     content.appendChild(this.seasonsContainer);
+ 
+diff --git a/tv-native/src/screens/OnDemandScreen.ts b/tv-native/src/screens/OnDemandScreen.ts
+index f9c610ac078ceaf34171580bffdddf28f2b6411a..6130b44dd83b7a076069888383ad85d8d2ae9ec4 100644
+--- a/tv-native/src/screens/OnDemandScreen.ts
++++ b/tv-native/src/screens/OnDemandScreen.ts
+@@ -13,6 +13,7 @@ import { Rail, CardModel } from '../components/Rail';
+ import { SpatialNav } from '../core/SpatialNav';
+ import { Escolha, OpcaoEscolha } from '../components/Escolha';
+ import { icone } from '../components/Icones';
++import { aplicarGap } from '../core/Gap';
+ 
+ export type CategoryFilter = 'todos' | 'filmes' | 'series' | 'animes' | 'doramas' | 'novelas' | 'kids' | 'novelinhas';
+ 
+@@ -89,7 +90,7 @@ export class OnDemandScreen {
+     this.filterBar = document.createElement('div');
+     this.filterBar.className = 'tv-category-chips';
+     this.filterBar.style.display = 'flex';
+-    this.filterBar.style.gap = '16px';
++    aplicarGap(this.filterBar, '16px');
+     this.filterBar.style.padding = '0 70px 24px';
+     this.renderCategoryChips();
+     this.scrollContainer.appendChild(this.filterBar);
+diff --git a/tv-native/vite.config.ts b/tv-native/vite.config.ts
+index 4f0eb00d8857af4a1d780e8b960eadf9af677c3f..3a317e87d41365e25ab102df5768c0fc612215b2 100644
+--- a/tv-native/vite.config.ts
++++ b/tv-native/vite.config.ts
+@@ -47,17 +47,123 @@ function temaCss() {
+ }
+ temaCss.postcss = true
+ 
++/**
++ * Fallback de `gap` em flexbox para TVs com Chromium < 84 (webOS 3/4/5, Tizen antigo).
++ * Para cada regra com `gap`, gera `html.sem-gap <seletor> > * + * { margin-… }`.
++ * A classe `sem-gap` só é posta no <html> quando a TV não suporta gap (src/core/Gap.ts),
++ * então nas TVs novas nada muda.
++ */
++function gapFallback() {
++  const sides = (v: string) => {
++    const p = v.trim().split(/\s+/);
++    return { linha: p[0], coluna: p[1] || p[0] };
++  };
++  return {
++    postcssPlugin: 'saimo-gap-fallback',
++    Once(root: any, { Rule }: any) {
++      // Direção e quebra de linha por seletor, considerando todas as regras do arquivo.
++      const dir: Record<string, string> = {};
++      const wrap: Record<string, boolean> = {};
++      root.walkRules((r: any) => {
++        r.walkDecls((d: any) => {
++          for (const s of r.selectors) {
++            if (d.prop === 'flex-direction') dir[s] = d.value;
++            if (d.prop === 'flex-wrap') wrap[s] = d.value !== 'nowrap';
++            if (d.prop === 'flex-flow') {
++              if (/column/.test(d.value)) dir[s] = 'column';
++              if (/\bwrap/.test(d.value)) wrap[s] = true;
++            }
++          }
++        });
++      });
++      root.walkRules((r: any) => {
++        if (r.selector.startsWith('html.sem-gap')) return;
++        let linha = '', coluna = '';
++        r.each((d: any) => {
++          if (d.type !== 'decl') return;
++          if (d.prop === 'gap') ({ linha, coluna } = sides(d.value));
++          if (d.prop === 'row-gap') linha = d.value.trim();
++          if (d.prop === 'column-gap') coluna = d.value.trim();
++        });
++        if (!linha && !coluna) return;
++        const novas: any[] = [];
++        for (const s of r.selectors) {
++          if (s.includes('::') || /:(before|after)\b/.test(s)) continue;
++          const coluna_ = /column/.test(dir[s] || '');
++          const reverso = /reverse/.test(dir[s] || '');
++          if (wrap[s]) {
++            const decl = [] as { prop: string; value: string }[];
++            if (coluna && coluna !== '0') decl.push({ prop: "margin-right", value: coluna });
++            if (linha && linha !== '0') decl.push({ prop: "margin-bottom", value: linha });
++            if (decl.length) novas.push(new Rule({ selector: `html.sem-gap ${s}>*`, nodes: [] }).append(...decl));
++          } else {
++            const valor = coluna_ ? linha : coluna;
++            if (!valor || valor === '0') continue;
++            const lado = coluna_ ? (reverso ? 'margin-bottom' : 'margin-top') : (reverso ? 'margin-right' : 'margin-left');
++            novas.push(new Rule({ selector: `html.sem-gap ${s}>*+*`, nodes: [] }).append({ prop: lado, value: valor }));
++          }
++        }
++        let ref = r;
++        for (const n of novas) { ref.after(n); ref = n; }
++      });
++    },
++  };
++}
++
++/**
++ * Reserva para `var()` em TV antiga (Chromium < 49 não tem variáveis de CSS): antes de cada
++ * declaração com `var(--x, reserva)` põe a mesma declaração com a reserva já resolvida.
++ * A TV antiga fica com a cor padrão (ignora a linha com var); as novas usam a do tema.
++ */
++function varReserva() {
++  const resolver = (v: string): string | null => {
++    for (let guarda = 0; guarda < 50; guarda++) {
++      const i = v.lastIndexOf('var(');
++      if (i < 0) return v;
++      let prof = 0, virgula = -1, fim = -1;
++      for (let j = i + 4; j < v.length; j++) {
++        const c = v[j];
++        if (c === '(') prof++;
++        else if (c === ')') { if (prof === 0) { fim = j; break; } prof--; }
++        else if (c === ',' && prof === 0 && virgula < 0) virgula = j;
++      }
++      if (fim < 0 || virgula < 0) return null; // sem reserva: não há o que pôr
++      v = v.slice(0, i) + v.slice(virgula + 1, fim).trim() + v.slice(fim + 1);
++    }
++    return null;
++  };
++  return {
++    postcssPlugin: 'saimo-var-reserva',
++    OnceExit(root: any) {
++      root.walkDecls((d: any) => {
++        if (d.prop.startsWith('--') || d.value.indexOf('var(') < 0) return;
++        const v = resolver(d.value);
++        if (!v || v === d.value) return;
++        const ant = d.prev();
++        if (ant && ant.type === 'decl' && ant.prop === d.prop && ant.value === v) return;
++        d.cloneBefore({ value: v });
++      });
++    },
++  };
++}
++
+ export default defineConfig({
+-  css: { postcss: { plugins: [temaCss()] } },
+   root: '.',
+   base: './',
+   define: {
+     __VERSAO_APP__: JSON.stringify(versao)
+   },
++  css: {
++    // varReserva() por último: o Chromium 38 (LG webOS 3) não conhece variáveis de CSS e
++    // descarta a declaração inteira com `var(--…, cor)` (as do tema e as escritas à mão).
++    postcss: { plugins: [temaCss(), gapFallback() as any, varReserva() as any] },
++  },
+   build: {
+     outDir: 'dist',
+     emptyOutDir: true,
+     target: ['chrome53', 'es2016'],
++    // Sem isso o esbuild reescreve o CSS para chrome68 e pode usar sintaxe que a TV antiga não lê.
++    cssTarget: ['chrome38'],
+     minify: 'esbuild',
+     rollupOptions: {
+       input: resolve(__dirname, 'index.html'),
+
+base-commit: 58dd340d196f7339e636b08e36953f32dff8a466
+-- 
+2.54.0 (Apple Git-157)
+

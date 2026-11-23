@@ -1,0 +1,41 @@
+From c447de5139167b10a31792c5ad14c747d40addb3 Mon Sep 17 00:00:00 2001
+From: saimo-lg <saimo-lg@local>
+Date: Wed, 18 Nov 2026 12:28:26 -0300
+Subject: [PATCH 6/8] =?UTF-8?q?TV=20antiga=20(root):=20ao=20abrir,=20pede?=
+ =?UTF-8?q?=20ao=20Homebrew=20Channel=20a=20inicializa=C3=A7=C3=A3o=20do?=
+ =?UTF-8?q?=20root=20se=20ela=20n=C3=A3o=20rodou=20no=20boot?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ tv-native/src/core/Atualizador.ts | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/tv-native/src/core/Atualizador.ts b/tv-native/src/core/Atualizador.ts
+index 32886932e9c50cdf355292346a3baa62cc75bc10..b159d319d6e527df6a575a9971cb98d4f85c8750 100644
+--- a/tv-native/src/core/Atualizador.ts
++++ b/tv-native/src/core/Atualizador.ts
+@@ -103,6 +103,7 @@ export class Atualizador {
+   private static el: HTMLElement | null = null;
+   private static ponteAtiva: any = null; // mantém a chamada viva (o GC cancelaria a assinatura)
+   private static instalando = false;
++  private static ponteAutostart: any = null;
+ 
+   static ativo(): boolean {
+     return !!URL_VERSAO && Platform.isWebOS;
+@@ -110,6 +111,11 @@ export class Atualizador {
+ 
+   static iniciar() {
+     if (!this.ativo()) return;
++    // TV com root (webOS 3): depois de um reinício completo (tomada, queda de luz) o sistema não
++    // dispara a inicialização do Homebrew Channel, e ficam desligados o SSH e os ajustes de
++    // /var/lib/webosbrew/init.d (IPv6 desligado, Hearth). Pedimos aqui ao abrir o app; se já
++    // rodou neste boot, o serviço só responde "already executed".
++    try { this.ponteAutostart = chamarLuna('luna://org.webosbrew.hbchannel.service/autostart', {}, () => {}); } catch (e) {}
+     window.setTimeout(() => this.verificar(false), 8000);
+     window.setInterval(() => this.verificar(false), SEIS_HORAS);
+   }
+-- 
+2.54.0 (Apple Git-157)
+

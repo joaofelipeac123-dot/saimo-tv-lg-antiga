@@ -1,0 +1,61 @@
+From 4feff50fea1a7fa40b9704d6e8a21c067a8ded3a Mon Sep 17 00:00:00 2001
+From: saimo-lg <saimo-lg@local>
+Date: Wed, 18 Nov 2026 12:48:19 -0300
+Subject: [PATCH 7/8] =?UTF-8?q?TV=20antiga:=20rolagem=20vertical=20em=20ca?=
+ =?UTF-8?q?mada=20da=20GPU=20e=20redu=C3=A7=C3=A3o=20simples=20das=20capas?=
+ =?UTF-8?q?=20(cima/baixo=20travava)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ tv-native/package-lock.json        |  4 ++--
+ tv-native/src/styles/tv-antiga.css | 16 ++++++++++++++++
+ 2 files changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/tv-native/package-lock.json b/tv-native/package-lock.json
+index f4b05f70041f9991c658b330040166bf4f7a1a91..1c2d0f7c4aeedb784cda3b9c6b929010c7ba926e 100644
+--- a/tv-native/package-lock.json
++++ b/tv-native/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "saimo-tv-native",
+-  "version": "3.0.4",
++  "version": "3.2.3",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "saimo-tv-native",
+-      "version": "3.0.4",
++      "version": "3.2.3",
+       "dependencies": {
+         "core-js": "^3.51.0",
+         "hls.js": "^1.5.17"
+diff --git a/tv-native/src/styles/tv-antiga.css b/tv-native/src/styles/tv-antiga.css
+index 95af6336c6fe0a330883729be17124f58bbe7017..18634292dd04fc5081e38539582f4a4e827f23fe 100644
+--- a/tv-native/src/styles/tv-antiga.css
++++ b/tv-native/src/styles/tv-antiga.css
+@@ -11,3 +11,19 @@
+   -webkit-transform: translateZ(0);
+   transform: translateZ(0);
+ }
++
++/* Rolagem vertical (cima/baixo) em camada da GPU: sem isso a tela inteira é redesenhada a cada
++   movimento. Medido na LG UJ6525: rolagem de 45-95 ms para 19-40 ms. */
++.tv-scroll-v {
++  -webkit-transform: translateZ(0);
++  transform: translateZ(0);
++}
++
++/* Capas: a TMDB manda 342 px e o card mostra 248 px. A redução em alta qualidade do Chromium 38
++   é refeita a cada trecho de tela redesenhado e travava a navegação (10,7 s de desenho em 4 s de
++   cima/baixo). A redução simples custa 16x menos e na TV a diferença não aparece. */
++.tv-card-poster-wrap img,
++.tv-card-wide-inner img,
++.tv-hero-banner img {
++  image-rendering: -webkit-optimize-contrast;
++}
+-- 
+2.54.0 (Apple Git-157)
+

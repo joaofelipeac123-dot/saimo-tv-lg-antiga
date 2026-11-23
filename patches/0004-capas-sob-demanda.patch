@@ -1,0 +1,138 @@
+From a42d8a3af06872c1e8fb801cfc7cde1fc6a78e11 Mon Sep 17 00:00:00 2001
+From: local <local@local>
+Date: Tue, 17 Nov 2026 16:10:15 -0300
+Subject: [PATCH 4/8] TV antiga: capas carregadas sob demanda (Chromium 38
+ ignora loading=lazy)
+
+---
+ tv-native/src/core/ImagensSobDemanda.ts | 102 ++++++++++++++++++++++++
+ tv-native/src/core/polyfills.ts         |   2 +
+ 2 files changed, 104 insertions(+)
+ create mode 100644 tv-native/src/core/ImagensSobDemanda.ts
+
+diff --git a/tv-native/src/core/ImagensSobDemanda.ts b/tv-native/src/core/ImagensSobDemanda.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..71f9c91422216f37bfb12debc0ce75f855fc644d
+--- /dev/null
++++ b/tv-native/src/core/ImagensSobDemanda.ts
+@@ -0,0 +1,102 @@
++/**
++ * Capas sob demanda para TV antiga (Chromium < 77 ignora `loading="lazy"`).
++ *
++ * Sem isso a TV baixa e decodifica todas as capas assim que a tela é montada: ~270 na Home,
++ * mais as das telas escondidas. Numa LG de 2017 isso trava a navegação enquanto carrega e
++ * ocupa ~100 MB de memória.
++ *
++ * Como funciona: toda <img loading="lazy"> que entra na página tem o `src` trocado por
++ * `data-src` antes de carregar. Depois de cada movimento do controle (e periodicamente), as
++ * imagens até 1 tela de distância recebem o `src` de volta; as que ficaram a mais de 3 telas
++ * são descarregadas para liberar memória (voltam do cache HTTP quando reaparecem).
++ */
++
++const PERTO = 1;   // telas de distância para carregar
++const LONGE = 3;   // telas de distância para descarregar
++const ATTR = 'data-sob-demanda';
++
++let agendado = false;
++
++function agendar(atraso = 60) {
++  if (agendado) return;
++  agendado = true;
++  window.setTimeout(() => {
++    agendado = false;
++    revisar();
++  }, atraso);
++}
++
++function adiar(img: HTMLImageElement) {
++  if (img.getAttribute(ATTR) !== null) return;
++  const src = img.getAttribute('src');
++  if (!src) return;
++  img.setAttribute(ATTR, src);
++  img.removeAttribute('src');
++}
++
++function tratarNo(no: Node) {
++  if (no.nodeType !== 1) return;
++  const el = no as Element;
++  if (el.tagName === 'IMG') {
++    if (el.getAttribute('loading') === 'lazy') adiar(el as HTMLImageElement);
++    return;
++  }
++  const lista = el.querySelectorAll('img[loading="lazy"]');
++  for (let i = 0; i < lista.length; i++) adiar(lista[i] as HTMLImageElement);
++}
++
++function revisar() {
++  const w = window.innerWidth || 1920;
++  const h = window.innerHeight || 1080;
++  const lista = document.querySelectorAll('img[' + ATTR + ']');
++  // Duas fases: primeiro SÓ lê as posições, depois SÓ altera. Alternar leitura e escrita
++  // obriga o navegador a recalcular o layout da página a cada imagem (medido na LG 2017:
++  // 255 capas × ~17 ms = 4,4 s de travamento por tecla).
++  const carregar: HTMLImageElement[] = [];
++  const descarregar: HTMLImageElement[] = [];
++  for (let i = 0; i < lista.length; i++) {
++    const img = lista[i] as HTMLImageElement;
++    const r = img.getBoundingClientRect();
++    // Tela escondida (display:none): tamanho zero.
++    if (r.width === 0 && r.height === 0) continue;
++    const carregada = img.hasAttribute('src');
++    const dx = r.right < 0 ? -r.right / w : r.left > w ? (r.left - w) / w : 0;
++    const dy = r.bottom < 0 ? -r.bottom / h : r.top > h ? (r.top - h) / h : 0;
++    const dist = Math.max(dx, dy);
++    if (!carregada && dist <= PERTO) carregar.push(img);
++    else if (carregada && dist > LONGE) descarregar.push(img);
++  }
++  for (let i = 0; i < carregar.length; i++) carregar[i].setAttribute('src', carregar[i].getAttribute(ATTR)!);
++  for (let i = 0; i < descarregar.length; i++) descarregar[i].removeAttribute('src');
++}
++
++export function iniciarImagensSobDemanda() {
++  if ('loading' in HTMLImageElement.prototype) return; // a TV já faz sozinha
++  if (typeof MutationObserver === 'undefined') return;
++
++  new MutationObserver((mudancas) => {
++    let houve = false;
++    for (let i = 0; i < mudancas.length; i++) {
++      const m = mudancas[i];
++      if (m.type === 'childList') {
++        for (let j = 0; j < m.addedNodes.length; j++) tratarNo(m.addedNodes[j]);
++        houve = true;
++      } else if (m.type === 'attributes' && (m.target as Element).tagName === 'IMG') {
++        // Código que troca o src de uma capa já existente.
++        const img = m.target as HTMLImageElement;
++        if (img.getAttribute('loading') === 'lazy' && img.getAttribute('src') && img.getAttribute(ATTR) !== img.getAttribute('src')) {
++          img.removeAttribute(ATTR);
++          adiar(img);
++          houve = true;
++        }
++      }
++    }
++    if (houve) agendar(30);
++  }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] });
++
++  // Depois de cada movimento do controle (o foco muda e o trilho/tela rola).
++  document.addEventListener('nav-focus', () => agendar(80), true);
++  window.addEventListener('keydown', () => agendar(150), true);
++  // Rede de segurança: telas que aparecem sem mudar o foco, rolagens por código etc.
++  window.setInterval(() => agendar(0), 1500);
++}
+diff --git a/tv-native/src/core/polyfills.ts b/tv-native/src/core/polyfills.ts
+index 7cba39f6f9707bfad2f414e4f3e3354c7f4ffd08..001ddc1f479488852fc14d029f28ecdbbce655b0 100644
+--- a/tv-native/src/core/polyfills.ts
++++ b/tv-native/src/core/polyfills.ts
+@@ -10,8 +10,10 @@
+ import 'core-js/stable';
+ import { detectarGap } from './Gap';
+ import '../styles/tv-antiga.css';
++import { iniciarImagensSobDemanda } from './ImagensSobDemanda';
+ 
+ detectarGap();
++iniciarImagensSobDemanda();
+ 
+ (function () {
+   var g: any = typeof globalThis !== 'undefined' ? globalThis : window;
+-- 
+2.54.0 (Apple Git-157)
+
